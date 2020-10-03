@@ -1,7 +1,10 @@
 package helmdeploy
 
 import (
+	"fmt"
 	"io"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,6 +19,7 @@ import (
 const deployDesc = `
 This command install a chart archive with the possibility to skip the dependency during the install process.
 `
+const outputFlag = "output"
 
 //NewDeploy : new deploy operation
 func NewDeploy(config *action.Configuration) *manager.Deploy {
@@ -46,6 +50,7 @@ func NewDeployCmd(cfg *action.Configuration, out io.Writer) *cobra.Command {
 	}
 
 	addDeployFlags(cmd, cmd.Flags(), client, valueOpts)
+	bindOutputFlag(cmd, &outfmt)
 	return cmd
 }
 
@@ -66,4 +71,52 @@ func addDeployFlags(cmd *cobra.Command, f *pflag.FlagSet, client *manager.Deploy
 	f.BoolVar(&client.SkipCRDs, "skip-crds", false, "if set, no CRDs will be installed. By default, CRDs are installed if not already present")
 	f.BoolVar(&client.NoDeps, "no-deps", false, "if set, no dependencies will be installed. By default, dependencies are installed ")
 	f.BoolVar(&client.SubNotes, "render-subchart-notes", false, "if set, render subchart notes along with the parent")
+}
+
+type outputValue output.Format
+
+func (o *outputValue) String() string {
+	// It is much cleaner looking (and technically less allocations) to just
+	// convert to a string rather than type asserting to the underlying
+	// output.Format
+	return string(*o)
+}
+
+func (o *outputValue) Type() string {
+	return "format"
+}
+
+func (o *outputValue) Set(s string) error {
+	outfmt, err := output.ParseFormat(s)
+	if err != nil {
+		return err
+	}
+	*o = outputValue(outfmt)
+	return nil
+}
+
+// bindOutputFlag will add the output flag to the given command and bind the
+// value to the given format pointer
+func bindOutputFlag(cmd *cobra.Command, varRef *output.Format) {
+	cmd.Flags().VarP(newOutputValue(output.Table, varRef), outputFlag, "o",
+		fmt.Sprintf("prints the output in the specified format. Allowed values: %s", strings.Join(output.Formats(), ", ")))
+
+	err := cmd.RegisterFlagCompletionFunc(outputFlag, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		var formatNames []string
+		for _, format := range output.Formats() {
+			if strings.HasPrefix(format, toComplete) {
+				formatNames = append(formatNames, format)
+			}
+		}
+		return formatNames, cobra.ShellCompDirectiveNoFileComp
+	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func newOutputValue(defaultValue output.Format, p *output.Format) *outputValue {
+	*p = defaultValue
+	return (*outputValue)(p)
 }
